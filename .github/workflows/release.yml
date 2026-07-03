@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  # Trigger manually from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.0.0). Also used as the release name."
+        required: true
+        default: "v1.0.0"
+  # Trigger automatically when a tag starting with 'v' is pushed.
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build & package .app
+        run: |
+          ./Scripts/build.sh zip
+        shell: bash
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "version=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MenuBarTool-app
+          path: build/MenuBarTool.app
+          if-no-files-found: error
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MenuBarTool-zip
+          path: build/MenuBarTool.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release & Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: build/MenuBarTool.zip
