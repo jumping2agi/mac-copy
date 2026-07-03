@@ -216,12 +216,16 @@ extension SettingsWindowController: NSTableViewDelegate {
 
         let preset = workingPresets[row]
         cell.textField?.stringValue = isTitle ? preset.title : preset.content
-        cell.onEdit = { [weak self] newValue in
-            guard let self = self, self.workingPresets.indices.contains(row) else { return }
+        // Look up the row dynamically — the captured `row` may be stale after
+        // insertions/deletions reorder the table.
+        cell.onEdit = { [weak self, weak cell] newValue in
+            guard let self = self, let cell = cell else { return }
+            let currentRow = self.tableView.row(for: cell)
+            guard self.workingPresets.indices.contains(currentRow) else { return }
             if isTitle {
-                self.workingPresets[row].title = newValue
+                self.workingPresets[currentRow].title = newValue
             } else {
-                self.workingPresets[row].content = newValue
+                self.workingPresets[currentRow].content = newValue
             }
         }
         return cell
