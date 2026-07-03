@@ -9,10 +9,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MenuBarTool",
-            path: "Sources/MenuBarTool",
-            resources: [
-                // Info.plist is copied/templated at build time by Scripts/build.sh
-            ]
+            path: "Sources/MenuBarTool"
         )
     ]
 )

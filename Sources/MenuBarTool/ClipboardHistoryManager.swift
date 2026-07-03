@@ -60,6 +60,13 @@ final class ClipboardHistoryManager {
 
     // MARK: - Mutations
 
+    /// Sync `lastChangeCount` with the pasteboard after a manual write so the
+    /// next poll doesn't re-detect the change we just made ourselves.
+    func syncChangeCount() {
+        lastChangeCount = pasteboard.changeCount
+        defaults.set(lastChangeCount, forKey: AppConstants.lastChangeCountKey)
+    }
+
     /// Insert a copied string at the front, de-duplicating and trimming to the max size.
     func add(_ string: String) {
         history.removeAll(where: { $0 == string })

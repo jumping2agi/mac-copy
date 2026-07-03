@@ -40,8 +40,6 @@ final class StatusBarController: NSObject {
         menu.delegate = self
         statusItem.menu = menu
 
-        presetManager.load()
-
         // Rebuild the menu when presets or clipboard history change.
         NotificationCenter.default.addObserver(
             self, selector: #selector(rebuildMenu),
@@ -126,13 +124,15 @@ final class StatusBarController: NSObject {
             return
         }
 
-        for (index, entry) in history.enumerated() {
+        for entry in history {
             let item = NSMenuItem(
                 title: ClipboardHistoryManager.preview(of: entry),
                 action: #selector(copyHistory(_:)),
                 keyEquivalent: "")
             item.target = self
-            item.representedObject = index
+            // Store the actual content so a stale menu (e.g. new copy arrived
+            // while open) never copies the wrong item.
+            item.representedObject = entry
             item.toolTip = entry
             clipboardSubmenu.addItem(item)
         }
@@ -152,9 +152,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func copyHistory(_ sender: NSMenuItem) {
-        guard let index = sender.representedObject as? Int,
-              clipboardManager.history.indices.contains(index) else { return }
-        let content = clipboardManager.history[index]
+        guard let content = sender.representedObject as? String else { return }
         copyToPasteboard(content)
     }
 
@@ -163,7 +161,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func openSettings() {
-        SettingsWindowController.shared.showWindow()
+        SettingsWindowController.shared.showSettings()
     }
 
     @objc private func quit() {
@@ -178,6 +176,8 @@ final class StatusBarController: NSObject {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(string, forType: .string)
+        // Sync the change count so the next poll doesn't re-add this string.
+        clipboardManager.syncChangeCount()
         clipboardManager.add(string)
     }
 }

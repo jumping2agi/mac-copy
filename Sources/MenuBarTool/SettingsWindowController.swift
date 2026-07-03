@@ -38,10 +38,10 @@ final class SettingsWindowController: NSWindowController {
 
     // MARK: - Show
 
-    func showWindow() {
+    /// Present the settings window, loading a fresh working copy from the manager.
+    func showSettings() {
         workingPresets = presetManager.presets.map { $0 } // copy
         tableView.reloadData()
-        showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -108,8 +108,12 @@ final class SettingsWindowController: NSWindowController {
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 
         let titleCol = NSTableColumn(identifier: ColumnIdentifier.title)
+        titleCol.width = 140
+        titleCol.minWidth = 80
         titleCol.resizingMask = .autoresizingMask
         let contentCol = NSTableColumn(identifier: ColumnIdentifier.content)
+        contentCol.width = 340
+        contentCol.minWidth = 200
         contentCol.resizingMask = .autoresizingMask
 
         table.addTableColumn(titleCol)

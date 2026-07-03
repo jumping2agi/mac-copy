@@ -11,13 +11,14 @@ final class PresetTextManager {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        load()
     }
 
     /// The current list of presets, in display order.
     private(set) var presets: [PresetText] = []
 
     /// Load presets from UserDefaults, installing sensible defaults on first run.
-    func load() {
+    private func load() {
         if let data = defaults.data(forKey: AppConstants.presetsKey),
            let decoded = try? JSONDecoder().decode([PresetText].self, from: data) {
             presets = decoded

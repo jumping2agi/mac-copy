@@ -25,7 +25,5 @@
     <true/>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>MenuBarTool needs to read the clipboard to keep a history of copied items.</string>
 </dict>
 </plist>
