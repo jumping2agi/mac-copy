@@ -318,7 +318,9 @@ private final class PresetCellView: NSTableCellView {
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.lineBreakMode = .byTruncatingTail
+        // byWordWrapping works correctly in edit mode (byTruncatingTail is a
+        // display-only mode that breaks selection/caret behavior while editing).
+        field.lineBreakMode = .byWordWrapping
         field.target = self
         field.action = #selector(textChanged)
         addSubview(field)
