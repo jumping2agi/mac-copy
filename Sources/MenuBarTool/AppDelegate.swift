@@ -32,13 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let editMenu = NSMenu(title: "编辑")
         editMenuItem.submenu = editMenu
 
-        // Use NSResponder.undo(_:) / redo(_:) — these are the "undo:" / "redo:"
-        // selectors (with colon) that route through the responder chain to the
-        // field editor (NSTextView). Using UndoManager.undo would produce the
-        // "undo" selector (no colon), which no responder answers, so the items
-        // would be auto-disabled and the shortcuts silently dropped.
-        editMenu.addItem(withTitle: "撤销", action: #selector(NSResponder.undo(_:)), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "重做", action: #selector(NSResponder.redo(_:)), keyEquivalent: "Z")
+        // Use the raw "undo:" / "redo:" selectors (with colon). These route
+        // through the responder chain to the field editor (NSTextView) and the
+        // shared NSUndoManager. We cannot use #selector(UndoManager.undo) because
+        // it produces the "undo" selector (no colon), and we cannot use
+        // #selector(NSResponder.undo(_:)) because NSResponder does not declare
+        // the method; it is dynamically handled by NSTextView/NSUndoManager.
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
