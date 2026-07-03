@@ -56,14 +56,40 @@ final class StatusBarController: NSObject {
 
     private func configureButton() {
         guard let button = statusItem.button else { return }
-        if let img = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "MenuBarTool") {
+
+        // Prefer the bundled AppIcon if one was generated. In development runs
+        // outside an .app bundle, or on hosts without iconutil, fall back to a
+        // system symbol or emoji.
+        if let icon = loadAppIcon() {
+            button.image = icon
+            button.image?.isTemplate = true
+        } else if let img = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "MenuBarTool") {
             button.image = img
             button.image?.isTemplate = true
         } else {
-            // Fallback for older systems.
             button.title = "📋"
         }
         button.toolTip = "MenuBarTool"
+    }
+
+    private func loadAppIcon() -> NSImage? {
+        // Try the icon inside the running .app bundle first.
+        if let bundleIconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: bundleIconURL) {
+            // The status bar expects a square, reasonably sized template image.
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        // Fall back to a Resources/AppIcon.png next to the executable (raw
+        // SwiftPM build or development run).
+        let pngURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources/AppIcon.png")
+        if let image = NSImage(contentsOf: pngURL) {
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        return nil
     }
 
     // MARK: - Menu building

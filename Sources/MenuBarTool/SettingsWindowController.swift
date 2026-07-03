@@ -15,6 +15,15 @@ final class SettingsWindowController: NSWindowController {
     /// Working copy edited in the table; committed on Save.
     private var workingPresets: [PresetText] = []
 
+    /// The text field currently in edit mode, if any.
+    ///
+    /// We keep this around so we can flush its value back into the working copy
+    /// before Save / Export / Close. NSTextField only sends its action when the
+    /// user presses Enter or the field resigns first responder, so a user who
+    /// types directly into a cell and then clicks "Save" would otherwise lose
+    /// the last edit.
+    private weak var activeEditor: NSTextField?
+
     private var tableView: NSTableView!
     private let addButton = NSButton(title: "+", target: nil, action: nil)
     private let removeButton = NSButton(title: "−", target: nil, action: nil)
@@ -33,6 +42,7 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 420, height: 300)
+        window.delegate = self
         super.init(window: window)
         window.contentView = buildContentView()
     }
@@ -142,6 +152,7 @@ final class SettingsWindowController: NSWindowController {
         table.addTableColumn(contentCol)
         table.dataSource = self
         table.delegate = self
+        table.doubleAction = #selector(startEditingSelectedRow)
         return table
     }
 
@@ -175,27 +186,81 @@ final class SettingsWindowController: NSWindowController {
         cancelButton.action = #selector(cancel)
     }
 
+    // MARK: - Editing lifecycle
+
+    /// Flush the currently active cell editor back into `workingPresets`.
+    ///
+    /// Must be called before any operation that reads the working copy for
+    /// persistence (Save, Export) or structural changes (Remove, Import).
+    private func commitActiveEditor() {
+        guard let editor = activeEditor else { return }
+        // Resigning first responder sends textDidEndEditing(_:) to the cell,
+        // which writes the value back to the model.
+        window?.makeFirstResponder(nil)
+        activeEditor = nil
+        // Keep the editor's string in sync in case the cell was reused.
+        _ = editor.stringValue
+    }
+
+    @objc private func startEditingSelectedRow() {
+        let row = tableView.selectedRow
+        guard workingPresets.indices.contains(row) else { return }
+        startEditing(row: row, isTitle: true)
+    }
+
+    private func startEditing(row: Int, isTitle: Bool) {
+        // Ensure the row is visible and selected.
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
+
+        // Make sure the cell exists. On the first layout pass the view may not
+        // be ready immediately, so retry once on the next runloop tick.
+        guard let view = tableView.view(atColumn: isTitle ? 0 : 1,
+                                        row: row,
+                                        makeIfNecessary: true) as? PresetCellView else {
+            DispatchQueue.main.async { [weak self] in
+                self?.startEditing(row: row, isTitle: isTitle)
+            }
+            return
+        }
+        view.textField?.becomeFirstResponder()
+    }
+
     // MARK: - Actions
 
     @objc private func addRow() {
+        commitActiveEditor()
+
         workingPresets.append(PresetText(title: "新条目", content: ""))
         let newRow = workingPresets.count - 1
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(newRow)
+
+        // Defer editing so the table has finished laying out the new row.
         DispatchQueue.main.async { [weak self] in
             self?.startEditing(row: newRow, isTitle: true)
         }
     }
 
     @objc private func removeRow() {
+        commitActiveEditor()
+
         let row = tableView.selectedRow
         guard workingPresets.indices.contains(row) else { return }
         workingPresets.remove(at: row)
         tableView.reloadData()
+
+        // Maintain a sensible selection.
+        let newSelection = min(row, workingPresets.count - 1)
+        if newSelection >= 0 {
+            tableView.selectRowIndexes(IndexSet(integer: newSelection), byExtendingSelection: false)
+        }
     }
 
     @objc private func save() {
+        commitActiveEditor()
+
         let cleaned = workingPresets.map { preset -> PresetText in
             let title = preset.title.trimmingCharacters(in: .whitespacesAndNewlines)
             return PresetText(
@@ -207,12 +272,15 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func cancel() {
+        commitActiveEditor()
         window?.orderOut(nil)
     }
 
     // MARK: - Import / Export
 
     @objc private func exportPresets() {
+        commitActiveEditor()
+
         let panel = NSSavePanel()
         panel.title = "导出快捷文本"
         panel.nameFieldStringValue = "MenuBarTool-presets.json"
@@ -233,6 +301,8 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func importPresets() {
+        commitActiveEditor()
+
         let panel = NSOpenPanel()
         panel.title = "导入快捷文本"
         panel.allowedContentTypes = [.json]
@@ -240,10 +310,14 @@ final class SettingsWindowController: NSWindowController {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let data = try Data(contentsOf: url)
-                // Import into the working copy so the user can review before saving.
                 let decoder = JSONDecoder()
                 let imported = try decoder.decode([PresetText].self, from: data)
-                workingPresets.append(contentsOf: imported)
+
+                // Merge imported items, skipping exact duplicates so the user
+                // doesn't end up with redundant entries.
+                let existing = Set(workingPresets.map(identityKey))
+                let unique = imported.filter { existing.contains(identityKey($0)) == false }
+                workingPresets.append(contentsOf: unique)
                 tableView.reloadData()
             } catch {
                 showAlert(title: "导入失败", message: error.localizedDescription)
@@ -259,18 +333,28 @@ final class SettingsWindowController: NSWindowController {
         alert.addButton(withTitle: "好")
         alert.runModal()
     }
-
-    private func startEditing(row: Int, isTitle: Bool) {
-        guard let view = tableView.view(atColumn: isTitle ? 0 : 1,
-                                        row: row,
-                                        makeIfNecessary: true) as? PresetCellView else { return }
-        view.textField?.becomeFirstResponder()
-    }
 }
+
+// MARK: - Helpers
 
 private enum ColumnIdentifier {
     static let title = NSUserInterfaceItemIdentifier("title")
     static let content = NSUserInterfaceItemIdentifier("content")
+}
+
+private func identityKey(_ preset: PresetText) -> String {
+    "\(preset.title)\t\(preset.content)"
+}
+
+// MARK: - NSWindowController / NSWindowDelegate
+
+extension SettingsWindowController: NSWindowDelegate {
+    /// If the user closes the settings window without saving, end any active
+    /// edit cleanly (without writing it back — it's a cancel).
+    func windowWillClose(_ notification: Notification) {
+        activeEditor = nil
+        window?.makeFirstResponder(nil)
+    }
 }
 
 // MARK: - NSTableViewDataSource
@@ -292,32 +376,43 @@ extension SettingsWindowController: NSTableViewDelegate {
         let isTitle = (column.identifier == ColumnIdentifier.title)
         let cellId = column.identifier
         let cell = (tableView.makeView(withIdentifier: cellId, owner: self) as? PresetCellView)
-            ?? PresetCellView(identifier: cellId)
+            ?? PresetCellView(identifier: cellId, isTitle: isTitle)
 
         let preset = workingPresets[row]
         cell.textField?.stringValue = isTitle ? preset.title : preset.content
-        // Look up the row dynamically — the captured `row` may be stale after
-        // insertions/deletions reorder the table.
-        cell.onEdit = { [weak self, weak cell] newValue in
+        cell.onEditBegan = { [weak self] field in
+            self?.activeEditor = field
+        }
+        cell.onEditEnded = { [weak self, weak cell] in
             guard let self = self, let cell = cell else { return }
+            self.activeEditor = nil
             let currentRow = self.tableView.row(for: cell)
             guard self.workingPresets.indices.contains(currentRow) else { return }
-            if isTitle {
-                self.workingPresets[currentRow].title = newValue
+            if cell.isTitleColumn {
+                self.workingPresets[currentRow].title = cell.textField?.stringValue ?? ""
             } else {
-                self.workingPresets[currentRow].content = newValue
+                self.workingPresets[currentRow].content = cell.textField?.stringValue ?? ""
             }
         }
         return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        // Starting an edit via double-click is handled by doubleAction, but if
+        // the user single-clicks a row and starts typing, AppKit does not
+        // automatically enter edit mode. We keep the simple double-click model.
     }
 }
 
 // MARK: - Editable cell
 
 private final class PresetCellView: NSTableCellView {
-    var onEdit: ((String) -> Void)?
+    var onEditBegan: ((NSTextField) -> Void)?
+    var onEditEnded: (() -> Void)?
+    let isTitleColumn: Bool
 
-    init(identifier: NSUserInterfaceItemIdentifier) {
+    init(identifier: NSUserInterfaceItemIdentifier, isTitle: Bool) {
+        self.isTitleColumn = isTitle
         super.init(frame: .zero)
         self.identifier = identifier
         setup()
@@ -345,9 +440,30 @@ private final class PresetCellView: NSTableCellView {
             field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+
+        // Track edit lifecycle so the controller can flush values before Save.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(textDidBeginEditing(_:)),
+            name: NSTextField.textDidBeginEditingNotification,
+            object: field)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(textDidEndEditing(_:)),
+            name: NSTextField.textDidEndEditingNotification,
+            object: field)
+    }
+
+    @objc private func textDidBeginEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        onEditBegan?(field)
+    }
+
+    @objc private func textDidEndEditing(_ notification: Notification) {
+        onEditEnded?()
     }
 
     @objc private func textChanged(_ sender: NSTextField) {
-        onEdit?(sender.stringValue)
+        onEditEnded?()
     }
 }
