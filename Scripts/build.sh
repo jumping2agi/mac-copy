@@ -40,6 +40,30 @@ cp "$EXECUTABLE" "$APP_BUNDLE/Contents/MacOS/MenuBarTool"
 chmod +x "$APP_BUNDLE/Contents/MacOS/MenuBarTool"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
+# Generate AppIcon.icns from Resources/AppIcon.png using sips + iconutil.
+# Skipped gracefully on non-macOS hosts (sips/iconutil are macOS-only).
+ICON_SRC="$ROOT_DIR/Resources/AppIcon.png"
+if [[ -f "$ICON_SRC" ]] && command -v iconutil >/dev/null 2>&1; then
+  echo "==> Generating AppIcon.icns..."
+  ICONSET="$BUILD_DIR/AppIcon.iconset"
+  rm -rf "$ICONSET"
+  mkdir -p "$ICONSET"
+  sips -z 16 16     "$ICON_SRC" --out "$ICONSET/icon_16x16.png"      >/dev/null
+  sips -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_16x16@2x.png"   >/dev/null
+  sips -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_32x32.png"      >/dev/null
+  sips -z 64 64     "$ICON_SRC" --out "$ICONSET/icon_32x32@2x.png"   >/dev/null
+  sips -z 128 128   "$ICON_SRC" --out "$ICONSET/icon_128x128.png"    >/dev/null
+  sips -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_256x256.png"    >/dev/null
+  sips -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_512x512.png"    >/dev/null
+  sips -z 1024 1024 "$ICON_SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+  iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+  rm -rf "$ICONSET"
+else
+  echo "    (icon generation skipped — iconutil not available)"
+fi
+
 # Ad-hoc sign so the bundle launches without Gatekeeper blocking on macOS 11+.
 # Replace with a Developer ID certificate for notarized distribution.
 echo "==> Ad-hoc code signing..."
