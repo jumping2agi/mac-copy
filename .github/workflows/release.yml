@@ -13,6 +13,11 @@ on:
     tags:
       - "v*"
 
+# The default GITHUB_TOKEN needs explicit write permission to create
+# releases and generate release notes.
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: macos-14
