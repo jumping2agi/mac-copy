@@ -42,7 +42,15 @@ final class SettingsWindowController: NSWindowController {
     // MARK: - Show
 
     /// Present the settings window, loading a fresh working copy from the manager.
+    /// If the window is already visible (e.g. user clicked 设置… again from the
+    /// status bar), just bring it to the front — don't reload, which would
+    /// silently discard unsaved edits.
     func showSettings() {
+        if window?.isVisible == true {
+            NSApp.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
+            return
+        }
         workingPresets = presetManager.presets.map { $0 } // copy
         tableView.reloadData()
         NSApp.activate(ignoringOtherApps: true)
@@ -210,8 +218,13 @@ final class SettingsWindowController: NSWindowController {
         panel.nameFieldStringValue = "MenuBarTool-presets.json"
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
+            // Export the working copy (what the user sees in the table), not the
+            // saved presets — otherwise unsaved edits would be silently missing
+            // from the exported file, which is inconsistent with import.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             do {
-                let data = try presetManager.exportPresets()
+                let data = try encoder.encode(workingPresets)
                 try data.write(to: url, options: .atomic)
             } catch {
                 showAlert(title: "导出失败", message: error.localizedDescription)
