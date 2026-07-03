@@ -42,8 +42,8 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 420, height: 300)
-        window.delegate = self
         super.init(window: window)
+        window.delegate = self
         window.contentView = buildContentView()
     }
 
