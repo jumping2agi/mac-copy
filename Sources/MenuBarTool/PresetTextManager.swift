@@ -1,5 +1,20 @@
 import Foundation
 
+/// Errors that can occur during preset import/export.
+enum PresetImportError: Error, LocalizedError {
+    case invalidJSON
+    case decodingFailed(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidJSON:
+            return "文件不是有效的 JSON 格式"
+        case .decodingFailed:
+            return "文件内容与快捷文本格式不匹配"
+        }
+    }
+}
+
 /// Loads and persists the user's preset quick-texts in UserDefaults.
 final class PresetTextManager {
     static let shared = PresetTextManager()
@@ -53,6 +68,32 @@ final class PresetTextManager {
         guard presets.indices.contains(index) else { return }
         presets.remove(at: index)
         save()
+    }
+
+    // MARK: - Import / Export
+
+    /// Export all presets as pretty-printed JSON data.
+    func exportPresets() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(presets)
+    }
+
+    /// Import presets from JSON data, replacing the current list.
+    /// - Parameter merge: If true, appends to existing presets; if false, replaces all.
+    func importPresets(from data: Data, merge: Bool) throws {
+        let decoder = JSONDecoder()
+        do {
+            let imported = try decoder.decode([PresetText].self, from: data)
+            if merge {
+                presets.append(contentsOf: imported)
+            } else {
+                presets = imported
+            }
+            save()
+        } catch {
+            throw PresetImportError.decodingFailed(error)
+        }
     }
 
     /// Built-in presets shown on first launch.

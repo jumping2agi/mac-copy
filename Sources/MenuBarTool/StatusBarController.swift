@@ -139,6 +139,25 @@ final class StatusBarController: NSObject {
 
         clipboardSubmenu.addItem(.separator())
 
+        // Per-item delete submenu: lets users remove a specific entry without
+        // clearing the entire history. History items above remain click-to-copy.
+        let deleteSubmenuItem = NSMenuItem(title: "删除…", action: nil, keyEquivalent: "")
+        let deleteSubmenu = NSMenu()
+        for entry in history {
+            let delItem = NSMenuItem(
+                title: ClipboardHistoryManager.preview(of: entry),
+                action: #selector(deleteHistoryItem(_:)),
+                keyEquivalent: "")
+            delItem.target = self
+            delItem.representedObject = entry
+            delItem.toolTip = entry
+            deleteSubmenu.addItem(delItem)
+        }
+        deleteSubmenuItem.submenu = deleteSubmenu
+        clipboardSubmenu.addItem(deleteSubmenuItem)
+
+        clipboardSubmenu.addItem(.separator())
+
         let clearItem = NSMenuItem(title: "清空历史", action: #selector(clearHistory), keyEquivalent: "")
         clearItem.target = self
         clipboardSubmenu.addItem(clearItem)
@@ -158,6 +177,11 @@ final class StatusBarController: NSObject {
 
     @objc private func clearHistory() {
         clipboardManager.clear()
+    }
+
+    @objc private func deleteHistoryItem(_ sender: NSMenuItem) {
+        guard let content = sender.representedObject as? String else { return }
+        clipboardManager.remove(content)
     }
 
     @objc private func openSettings() {

@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// A settings window for editing the preset quick-texts.
 ///
@@ -17,6 +18,8 @@ final class SettingsWindowController: NSWindowController {
     private var tableView: NSTableView!
     private let addButton = NSButton(title: "+", target: nil, action: nil)
     private let removeButton = NSButton(title: "−", target: nil, action: nil)
+    private let importButton = NSButton(title: "导入", target: nil, action: nil)
+    private let exportButton = NSButton(title: "导出", target: nil, action: nil)
     private let saveButton = NSButton(title: "保存", target: nil, action: nil)
     private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
 
@@ -69,6 +72,12 @@ final class SettingsWindowController: NSWindowController {
         buttonsRow.translatesAutoresizingMaskIntoConstraints = false
         buttonsRow.alignment = .centerY
 
+        let ioRow = NSStackView(views: [importButton, exportButton])
+        ioRow.orientation = .horizontal
+        ioRow.spacing = 8
+        ioRow.translatesAutoresizingMaskIntoConstraints = false
+        ioRow.alignment = .centerY
+
         let actionRow = NSStackView(views: [cancelButton, saveButton])
         actionRow.orientation = .horizontal
         actionRow.spacing = 8
@@ -77,6 +86,7 @@ final class SettingsWindowController: NSWindowController {
 
         container.addSubview(scrollView)
         container.addSubview(buttonsRow)
+        container.addSubview(ioRow)
         container.addSubview(actionRow)
 
         NSLayoutConstraint.activate([
@@ -87,6 +97,10 @@ final class SettingsWindowController: NSWindowController {
             buttonsRow.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8),
             buttonsRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             buttonsRow.heightAnchor.constraint(equalToConstant: 24),
+
+            ioRow.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8),
+            ioRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            ioRow.heightAnchor.constraint(equalToConstant: 24),
 
             actionRow.topAnchor.constraint(equalTo: buttonsRow.bottomAnchor, constant: 12),
             actionRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
@@ -134,6 +148,14 @@ final class SettingsWindowController: NSWindowController {
         removeButton.target = self
         removeButton.action = #selector(removeRow)
 
+        importButton.bezelStyle = .rounded
+        importButton.target = self
+        importButton.action = #selector(importPresets)
+
+        exportButton.bezelStyle = .rounded
+        exportButton.target = self
+        exportButton.action = #selector(exportPresets)
+
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"
         saveButton.target = self
@@ -178,6 +200,51 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func cancel() {
         window?.orderOut(nil)
+    }
+
+    // MARK: - Import / Export
+
+    @objc private func exportPresets() {
+        let panel = NSSavePanel()
+        panel.title = "导出快捷文本"
+        panel.nameFieldStringValue = "MenuBarTool-presets.json"
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let data = try presetManager.exportPresets()
+                try data.write(to: url, options: .atomic)
+            } catch {
+                showAlert(title: "导出失败", message: error.localizedDescription)
+            }
+        }
+    }
+
+    @objc private func importPresets() {
+        let panel = NSOpenPanel()
+        panel.title = "导入快捷文本"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let data = try Data(contentsOf: url)
+                // Import into the working copy so the user can review before saving.
+                let decoder = JSONDecoder()
+                let imported = try decoder.decode([PresetText].self, from: data)
+                workingPresets.append(contentsOf: imported)
+                tableView.reloadData()
+            } catch {
+                showAlert(title: "导入失败", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     private func startEditing(row: Int, isTitle: Bool) {
