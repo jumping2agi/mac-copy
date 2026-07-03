@@ -48,16 +48,17 @@ if [[ -f "$ICON_SRC" ]] && command -v iconutil >/dev/null 2>&1; then
   ICONSET="$BUILD_DIR/AppIcon.iconset"
   rm -rf "$ICONSET"
   mkdir -p "$ICONSET"
-  sips -z 16 16     "$ICON_SRC" --out "$ICONSET/icon_16x16.png"      >/dev/null
-  sips -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_16x16@2x.png"   >/dev/null
-  sips -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_32x32.png"      >/dev/null
-  sips -z 64 64     "$ICON_SRC" --out "$ICONSET/icon_32x32@2x.png"   >/dev/null
-  sips -z 128 128   "$ICON_SRC" --out "$ICONSET/icon_128x128.png"    >/dev/null
-  sips -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
-  sips -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_256x256.png"    >/dev/null
-  sips -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
-  sips -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_512x512.png"    >/dev/null
-  sips -z 1024 1024 "$ICON_SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+  # Force PNG format: the source may be JPEG-encoded despite a .png suffix.
+  sips -s format png -z 16 16     "$ICON_SRC" --out "$ICONSET/icon_16x16.png"      >/dev/null
+  sips -s format png -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_16x16@2x.png"   >/dev/null
+  sips -s format png -z 32 32     "$ICON_SRC" --out "$ICONSET/icon_32x32.png"      >/dev/null
+  sips -s format png -z 64 64     "$ICON_SRC" --out "$ICONSET/icon_32x32@2x.png"   >/dev/null
+  sips -s format png -z 128 128   "$ICON_SRC" --out "$ICONSET/icon_128x128.png"    >/dev/null
+  sips -s format png -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+  sips -s format png -z 256 256   "$ICON_SRC" --out "$ICONSET/icon_256x256.png"    >/dev/null
+  sips -s format png -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+  sips -s format png -z 512 512   "$ICON_SRC" --out "$ICONSET/icon_512x512.png"    >/dev/null
+  sips -s format png -z 1024 1024 "$ICON_SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
   iconutil -c icns "$ICONSET" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
   rm -rf "$ICONSET"
 else
