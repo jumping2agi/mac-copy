@@ -3,9 +3,15 @@ import UniformTypeIdentifiers
 
 /// A settings window for editing the preset quick-texts.
 ///
-/// Uses an editable `NSTableView` with two columns (标题 / 内容), plus
-/// Add/Remove and Save/Cancel buttons. Editing is done on a working copy;
-/// changes are committed to `PresetTextManager` only on Save.
+/// Master–detail layout:
+///   - Left:  a list of preset titles (single-click to select for editing).
+///   - Right: a title field and a multi-line content text view for the
+///            currently selected preset.
+///   - Bottom: + / − (add/remove), 导入 / 导出, 取消 / 保存.
+///
+/// Editing is done on a working copy; changes are committed to
+/// `PresetTextManager` only on Save. The edit panel writes back to the working
+/// copy on every keystroke, so Save never loses the last edit.
 final class SettingsWindowController: NSWindowController {
 
     static let shared = SettingsWindowController()
@@ -15,16 +21,10 @@ final class SettingsWindowController: NSWindowController {
     /// Working copy edited in the table; committed on Save.
     private var workingPresets: [PresetText] = []
 
-    /// The text field currently in edit mode, if any.
-    ///
-    /// We keep this around so we can flush its value back into the working copy
-    /// before Save / Export / Close. NSTextField only sends its action when the
-    /// user presses Enter or the field resigns first responder, so a user who
-    /// types directly into a cell and then clicks "Save" would otherwise lose
-    /// the last edit.
-    private weak var activeEditor: NSTextField?
-
     private var tableView: NSTableView!
+    private var titleField: NSTextField!
+    private var contentTextView: NSTextView!
+
     private let addButton = NSButton(title: "+", target: nil, action: nil)
     private let removeButton = NSButton(title: "−", target: nil, action: nil)
     private let importButton = NSButton(title: "导入", target: nil, action: nil)
@@ -32,16 +32,20 @@ final class SettingsWindowController: NSWindowController {
     private let saveButton = NSButton(title: "保存", target: nil, action: nil)
     private let cancelButton = NSButton(title: "取消", target: nil, action: nil)
 
+    /// Guard against feedback loops when we programmatically update the edit
+    /// panel from the model (e.g. after a selection change).
+    private var isSyncingPanel = false
+
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 660, height: 440),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false)
         window.title = "设置 — 快捷文本"
         window.center()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 420, height: 300)
+        window.minSize = NSSize(width: 560, height: 360)
         super.init(window: window)
         window.delegate = self
         window.contentView = buildContentView()
@@ -51,10 +55,8 @@ final class SettingsWindowController: NSWindowController {
 
     // MARK: - Show
 
-    /// Present the settings window, loading a fresh working copy from the manager.
-    /// If the window is already visible (e.g. user clicked 设置… again from the
-    /// status bar), just bring it to the front — don't reload, which would
-    /// silently discard unsaved edits.
+    /// Present the settings window. If already visible, just bring it to the
+    /// front without reloading (so unsaved edits are preserved).
     func showSettings() {
         if window?.isVisible == true {
             NSApp.activate(ignoringOtherApps: true)
@@ -63,6 +65,11 @@ final class SettingsWindowController: NSWindowController {
         }
         workingPresets = presetManager.presets.map { $0 } // copy
         tableView.reloadData()
+        if !workingPresets.isEmpty {
+            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        } else {
+            updateEditPanel()
+        }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -70,60 +77,136 @@ final class SettingsWindowController: NSWindowController {
     // MARK: - Layout
 
     private func buildContentView() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 380))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 660, height: 440))
         container.translatesAutoresizingMaskIntoConstraints = false
 
-        // Scrollable table.
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
-
+        // --- Left: list ---
+        let listScroll = NSScrollView()
+        listScroll.translatesAutoresizingMaskIntoConstraints = false
+        listScroll.hasVerticalScroller = true
+        listScroll.borderType = .bezelBorder
         tableView = makeTableView()
-        scrollView.documentView = tableView
+        listScroll.documentView = tableView
 
         configureButtons()
 
-        let buttonsRow = NSStackView(views: [addButton, removeButton])
-        buttonsRow.orientation = .horizontal
-        buttonsRow.spacing = 6
-        buttonsRow.translatesAutoresizingMaskIntoConstraints = false
-        buttonsRow.alignment = .centerY
+        // --- Right: editor ---
+        let titleLabel = NSTextField(labelWithString: "标题")
+        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
 
-        let ioRow = NSStackView(views: [importButton, exportButton])
-        ioRow.orientation = .horizontal
-        ioRow.spacing = 8
-        ioRow.translatesAutoresizingMaskIntoConstraints = false
-        ioRow.alignment = .centerY
+        titleField = NSTextField()
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        titleField.placeholderString = "显示在菜单中的名称"
+        titleField.target = self
+        titleField.action = #selector(titleFieldAction)
+        // Live-commit title edits so Save never loses the last keystroke.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(titleFieldTextChanged),
+            name: NSControl.textDidChangeNotification, object: titleField)
 
-        let actionRow = NSStackView(views: [cancelButton, saveButton])
-        actionRow.orientation = .horizontal
-        actionRow.spacing = 8
-        actionRow.translatesAutoresizingMaskIntoConstraints = false
-        actionRow.alignment = .centerY
+        let contentLabel = NSTextField(labelWithString: "内容")
+        contentLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
 
-        container.addSubview(scrollView)
-        container.addSubview(buttonsRow)
-        container.addSubview(ioRow)
-        container.addSubview(actionRow)
+        contentTextView = NSTextView()
+        contentTextView.isRichText = false
+        contentTextView.font = NSFont.systemFont(ofSize: 13)
+        contentTextView.textColor = .labelColor
+        contentTextView.backgroundColor = .textBackgroundColor
+        contentTextView.isVerticallyResizable = true
+        contentTextView.isHorizontallyResizable = false
+        contentTextView.textContainer?.widthTracksTextView = true
+        contentTextView.textContainer?.size = NSSize(width: 0, height: .greatestFiniteMagnitude)
+        contentTextView.autoresizingMask = [.width]
+        contentTextView.delegate = self
+
+        let contentScroll = NSScrollView()
+        contentScroll.translatesAutoresizingMaskIntoConstraints = false
+        contentScroll.hasVerticalScroller = true
+        contentScroll.borderType = .bezelBorder
+        contentScroll.documentView = contentTextView
+
+        let editor = NSView()
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        editor.addSubview(titleLabel)
+        editor.addSubview(titleField)
+        editor.addSubview(contentLabel)
+        editor.addSubview(contentScroll)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            titleLabel.topAnchor.constraint(equalTo: editor.topAnchor, constant: 6),
+            titleLabel.leadingAnchor.constraint(equalTo: editor.leadingAnchor),
+            titleLabel.widthAnchor.constraint(equalToConstant: 36),
 
-            buttonsRow.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8),
-            buttonsRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            buttonsRow.heightAnchor.constraint(equalToConstant: 24),
+            titleField.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            titleField.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 8),
+            titleField.trailingAnchor.constraint(equalTo: editor.trailingAnchor),
 
-            ioRow.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8),
-            ioRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            ioRow.heightAnchor.constraint(equalToConstant: 24),
+            contentLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 14),
+            contentLabel.leadingAnchor.constraint(equalTo: editor.leadingAnchor),
+            contentLabel.widthAnchor.constraint(equalToConstant: 36),
 
-            actionRow.topAnchor.constraint(equalTo: buttonsRow.bottomAnchor, constant: 12),
-            actionRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            actionRow.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-            actionRow.heightAnchor.constraint(equalToConstant: 28),
+            contentScroll.topAnchor.constraint(equalTo: contentLabel.topAnchor),
+            contentScroll.leadingAnchor.constraint(equalTo: contentLabel.trailingAnchor, constant: 8),
+            contentScroll.trailingAnchor.constraint(equalTo: editor.trailingAnchor),
+            contentScroll.bottomAnchor.constraint(equalTo: editor.bottomAnchor),
+        ])
+
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
+        // --- Bottom rows ---
+        let listActions = NSStackView(views: [addButton, removeButton])
+        listActions.orientation = .horizontal
+        listActions.spacing = 6
+        listActions.translatesAutoresizingMaskIntoConstraints = false
+        listActions.alignment = .centerY
+
+        let fileActions = NSStackView(views: [importButton, exportButton])
+        fileActions.orientation = .horizontal
+        fileActions.spacing = 8
+        fileActions.translatesAutoresizingMaskIntoConstraints = false
+        fileActions.alignment = .centerY
+
+        let saveActions = NSStackView(views: [cancelButton, saveButton])
+        saveActions.orientation = .horizontal
+        saveActions.spacing = 8
+        saveActions.translatesAutoresizingMaskIntoConstraints = false
+        saveActions.alignment = .centerY
+
+        container.addSubview(listScroll)
+        container.addSubview(separator)
+        container.addSubview(editor)
+        container.addSubview(listActions)
+        container.addSubview(fileActions)
+        container.addSubview(saveActions)
+
+        NSLayoutConstraint.activate([
+            listScroll.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+            listScroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            listScroll.widthAnchor.constraint(equalToConstant: 180),
+            listScroll.bottomAnchor.constraint(equalTo: listActions.topAnchor, constant: -12),
+
+            separator.topAnchor.constraint(equalTo: listScroll.topAnchor),
+            separator.bottomAnchor.constraint(equalTo: listScroll.bottomAnchor),
+            separator.leadingAnchor.constraint(equalTo: listScroll.trailingAnchor, constant: 12),
+
+            editor.topAnchor.constraint(equalTo: listScroll.topAnchor),
+            editor.leadingAnchor.constraint(equalTo: separator.trailingAnchor, constant: 12),
+            editor.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            editor.bottomAnchor.constraint(equalTo: saveActions.topAnchor, constant: -12),
+
+            listActions.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            listActions.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            listActions.heightAnchor.constraint(equalToConstant: 28),
+
+            fileActions.leadingAnchor.constraint(equalTo: listActions.trailingAnchor, constant: 16),
+            fileActions.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            fileActions.heightAnchor.constraint(equalToConstant: 28),
+
+            saveActions.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            saveActions.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            saveActions.heightAnchor.constraint(equalToConstant: 28),
         ])
 
         return container
@@ -139,20 +222,11 @@ final class SettingsWindowController: NSWindowController {
         table.usesAlternatingRowBackgroundColors = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 
-        let titleCol = NSTableColumn(identifier: ColumnIdentifier.title)
-        titleCol.width = 140
-        titleCol.minWidth = 80
-        titleCol.resizingMask = .autoresizingMask
-        let contentCol = NSTableColumn(identifier: ColumnIdentifier.content)
-        contentCol.width = 340
-        contentCol.minWidth = 200
-        contentCol.resizingMask = .autoresizingMask
-
-        table.addTableColumn(titleCol)
-        table.addTableColumn(contentCol)
+        let col = NSTableColumn(identifier: ColumnIdentifier.title)
+        col.resizingMask = .autoresizingMask
+        table.addTableColumn(col)
         table.dataSource = self
         table.delegate = self
-        table.doubleAction = #selector(startEditingSelectedRow)
         return table
     }
 
@@ -181,84 +255,97 @@ final class SettingsWindowController: NSWindowController {
         saveButton.action = #selector(save)
 
         cancelButton.bezelStyle = .rounded
-        cancelButton.keyEquivalent = "\u{1b}" // Esc
+        cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.target = self
         cancelButton.action = #selector(cancel)
     }
 
-    // MARK: - Editing lifecycle
+    // MARK: - Panel sync
 
-    /// Flush the currently active cell editor back into `workingPresets`.
-    ///
-    /// Must be called before any operation that reads the working copy for
-    /// persistence (Save, Export) or structural changes (Remove, Import).
-    private func commitActiveEditor() {
-        guard activeEditor != nil else { return }
-        // Resigning first responder sends textDidEndEditing(_:) to the cell,
-        // which writes the value back to the model.
-        window?.makeFirstResponder(nil)
-        activeEditor = nil
+    /// Update the right-hand edit panel to reflect the currently selected row.
+    private func updateEditPanel() {
+        isSyncingPanel = true
+        defer { isSyncingPanel = false }
+
+        let row = tableView.selectedRow
+        if workingPresets.indices.contains(row) {
+            let preset = workingPresets[row]
+            titleField.stringValue = preset.title
+            contentTextView.string = preset.content
+            setEditingEnabled(true)
+        } else {
+            titleField.stringValue = ""
+            contentTextView.string = ""
+            setEditingEnabled(false)
+        }
     }
 
-    @objc private func startEditingSelectedRow() {
+    private func setEditingEnabled(_ enabled: Bool) {
+        titleField.isEnabled = enabled
+        contentTextView.isEditable = enabled
+        contentTextView.isSelectable = enabled
+    }
+
+    /// Write the current edit panel values back into the working copy for the
+    /// selected row. Called on every keystroke.
+    private func commitEditPanelToModel() {
+        guard !isSyncingPanel else { return }
         let row = tableView.selectedRow
         guard workingPresets.indices.contains(row) else { return }
-        startEditing(row: row, isTitle: true)
-    }
-
-    private func startEditing(row: Int, isTitle: Bool) {
-        // Ensure the row is visible and selected.
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        tableView.scrollRowToVisible(row)
-
-        // Make sure the cell exists. On the first layout pass the view may not
-        // be ready immediately, so retry once on the next runloop tick.
-        guard let view = tableView.view(atColumn: isTitle ? 0 : 1,
-                                        row: row,
-                                        makeIfNecessary: true) as? PresetCellView else {
-            DispatchQueue.main.async { [weak self] in
-                self?.startEditing(row: row, isTitle: isTitle)
-            }
-            return
-        }
-        view.textField?.becomeFirstResponder()
+        workingPresets[row].title = titleField.stringValue
+        workingPresets[row].content = contentTextView.string
     }
 
     // MARK: - Actions
 
     @objc private func addRow() {
-        commitActiveEditor()
-
         workingPresets.append(PresetText(title: "新条目", content: ""))
         let newRow = workingPresets.count - 1
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(newRow)
-
-        // Defer editing so the table has finished laying out the new row.
+        // Focus the title field and select all so the user can immediately
+        // type to replace the default "新条目" name.
         DispatchQueue.main.async { [weak self] in
-            self?.startEditing(row: newRow, isTitle: true)
+            guard let self = self else { return }
+            self.window?.makeFirstResponder(self.titleField)
+            self.titleField.currentEditor()?.selectAll(nil)
         }
     }
 
     @objc private func removeRow() {
-        commitActiveEditor()
-
         let row = tableView.selectedRow
         guard workingPresets.indices.contains(row) else { return }
         workingPresets.remove(at: row)
         tableView.reloadData()
-
-        // Maintain a sensible selection.
         let newSelection = min(row, workingPresets.count - 1)
         if newSelection >= 0 {
             tableView.selectRowIndexes(IndexSet(integer: newSelection), byExtendingSelection: false)
+        } else {
+            updateEditPanel()
         }
     }
 
-    @objc private func save() {
-        commitActiveEditor()
+    @objc private func titleFieldAction() {
+        // Enter pressed in the title field — commit and move focus to content.
+        commitEditPanelToModel()
+        refreshSelectedTableRow()
+        window?.makeFirstResponder(contentTextView)
+    }
 
+    @objc private func titleFieldTextChanged() {
+        commitEditPanelToModel()
+        refreshSelectedTableRow()
+    }
+
+    private func refreshSelectedTableRow() {
+        let row = tableView.selectedRow
+        guard workingPresets.indices.contains(row) else { return }
+        tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+    }
+
+    @objc private func save() {
+        // Model is already in sync via live commits; just clean and persist.
         let cleaned = workingPresets.map { preset -> PresetText in
             let title = preset.title.trimmingCharacters(in: .whitespacesAndNewlines)
             return PresetText(
@@ -270,23 +357,17 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func cancel() {
-        commitActiveEditor()
         window?.orderOut(nil)
     }
 
     // MARK: - Import / Export
 
     @objc private func exportPresets() {
-        commitActiveEditor()
-
         let panel = NSSavePanel()
         panel.title = "导出快捷文本"
         panel.nameFieldStringValue = "MenuBarTool-presets.json"
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url {
-            // Export the working copy (what the user sees in the table), not the
-            // saved presets — otherwise unsaved edits would be silently missing
-            // from the exported file, which is inconsistent with import.
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             do {
@@ -299,8 +380,6 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func importPresets() {
-        commitActiveEditor()
-
         let panel = NSOpenPanel()
         panel.title = "导入快捷文本"
         panel.allowedContentTypes = [.json]
@@ -310,13 +389,13 @@ final class SettingsWindowController: NSWindowController {
                 let data = try Data(contentsOf: url)
                 let decoder = JSONDecoder()
                 let imported = try decoder.decode([PresetText].self, from: data)
-
-                // Merge imported items, skipping exact duplicates so the user
-                // doesn't end up with redundant entries.
                 let existing = Set(workingPresets.map(identityKey))
                 let unique = imported.filter { existing.contains(identityKey($0)) == false }
                 workingPresets.append(contentsOf: unique)
                 tableView.reloadData()
+                if tableView.selectedRow < 0, !workingPresets.isEmpty {
+                    tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+                }
             } catch {
                 showAlert(title: "导入失败", message: error.localizedDescription)
             }
@@ -337,20 +416,16 @@ final class SettingsWindowController: NSWindowController {
 
 private enum ColumnIdentifier {
     static let title = NSUserInterfaceItemIdentifier("title")
-    static let content = NSUserInterfaceItemIdentifier("content")
 }
 
 private func identityKey(_ preset: PresetText) -> String {
     "\(preset.title)\t\(preset.content)"
 }
 
-// MARK: - NSWindowController / NSWindowDelegate
+// MARK: - NSWindowDelegate
 
 extension SettingsWindowController: NSWindowDelegate {
-    /// If the user closes the settings window without saving, end any active
-    /// edit cleanly (without writing it back — it's a cancel).
     func windowWillClose(_ notification: Notification) {
-        activeEditor = nil
         window?.makeFirstResponder(nil)
     }
 }
@@ -366,96 +441,41 @@ extension SettingsWindowController: NSTableViewDataSource {
 // MARK: - NSTableViewDelegate
 
 extension SettingsWindowController: NSTableViewDelegate {
-
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard workingPresets.indices.contains(row),
-              let column = tableColumn else { return nil }
-
-        let isTitle = (column.identifier == ColumnIdentifier.title)
-        let cellId = column.identifier
-        let cell = (tableView.makeView(withIdentifier: cellId, owner: self) as? PresetCellView)
-            ?? PresetCellView(identifier: cellId, isTitle: isTitle)
-
-        let preset = workingPresets[row]
-        cell.textField?.stringValue = isTitle ? preset.title : preset.content
-        cell.onEditBegan = { [weak self] field in
-            self?.activeEditor = field
-        }
-        cell.onEditEnded = { [weak self, weak cell] in
-            guard let self = self, let cell = cell else { return }
-            self.activeEditor = nil
-            let currentRow = self.tableView.row(for: cell)
-            guard self.workingPresets.indices.contains(currentRow) else { return }
-            if cell.isTitleColumn {
-                self.workingPresets[currentRow].title = cell.textField?.stringValue ?? ""
-            } else {
-                self.workingPresets[currentRow].content = cell.textField?.stringValue ?? ""
-            }
-        }
+        guard workingPresets.indices.contains(row) else { return nil }
+        let cell = (tableView.makeView(withIdentifier: ColumnIdentifier.title, owner: self) as? NSTableCellView)
+            ?? makeTitleCell()
+        let title = workingPresets[row].title
+        cell.textField?.stringValue = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "（未命名）" : title
         return cell
+    }
+
+    private func makeTitleCell() -> NSTableCellView {
+        let cell = NSTableCellView()
+        cell.identifier = ColumnIdentifier.title
+        let field = NSTextField(labelWithString: "")
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.lineBreakMode = .byTruncatingTail
+        field.font = NSFont.systemFont(ofSize: 13)
+        cell.addSubview(field)
+        cell.textField = field
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+            field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateEditPanel()
     }
 }
 
-// MARK: - Editable cell
+// MARK: - NSTextViewDelegate
 
-private final class PresetCellView: NSTableCellView {
-    var onEditBegan: ((NSTextField) -> Void)?
-    var onEditEnded: (() -> Void)?
-    let isTitleColumn: Bool
-
-    init(identifier: NSUserInterfaceItemIdentifier, isTitle: Bool) {
-        self.isTitleColumn = isTitle
-        super.init(frame: .zero)
-        self.identifier = identifier
-        setup()
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    private func setup() {
-        let field = NSTextField()
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        // byWordWrapping works correctly in edit mode (byTruncatingTail is a
-        // display-only mode that breaks selection/caret behavior while editing).
-        field.lineBreakMode = .byWordWrapping
-        field.target = self
-        field.action = #selector(textChanged)
-        addSubview(field)
-        self.textField = field
-
-        NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            field.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-        ])
-
-        // Track edit lifecycle so the controller can flush values before Save.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textDidBeginEditing(_:)),
-            name: NSTextField.textDidBeginEditingNotification,
-            object: field)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textDidEndEditing(_:)),
-            name: NSTextField.textDidEndEditingNotification,
-            object: field)
-    }
-
-    @objc private func textDidBeginEditing(_ notification: Notification) {
-        guard let field = notification.object as? NSTextField else { return }
-        onEditBegan?(field)
-    }
-
-    @objc private func textDidEndEditing(_ notification: Notification) {
-        onEditEnded?()
-    }
-
-    @objc private func textChanged(_ sender: NSTextField) {
-        onEditEnded?()
+extension SettingsWindowController: NSTextViewDelegate {
+    func textDidChange(_ notification: Notification) {
+        commitEditPanelToModel()
     }
 }
