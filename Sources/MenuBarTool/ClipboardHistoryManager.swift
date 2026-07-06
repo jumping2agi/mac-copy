@@ -86,6 +86,14 @@ final class ClipboardHistoryManager {
         NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
     }
 
+    /// Remove the first entry matching the given content.
+    func remove(_ content: String) {
+        guard let index = history.firstIndex(of: content) else { return }
+        history.remove(at: index)
+        save()
+        NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
+    }
+
     /// Clear the entire history.
     func clear() {
         guard !history.isEmpty else { return }
