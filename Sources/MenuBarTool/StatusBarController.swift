@@ -56,14 +56,39 @@ final class StatusBarController: NSObject {
 
     private func configureButton() {
         guard let button = statusItem.button else { return }
-        if let img = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "MenuBarTool") {
+
+        // Prefer the bundled AppIcon if one was generated. In development runs
+        // outside an .app bundle, or on hosts without iconutil, fall back to a
+        // system symbol or emoji.
+        if let icon = loadAppIcon() {
+            button.image = icon
+            button.image?.isTemplate = true
+        } else if let img = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "MenuBarTool") {
             button.image = img
             button.image?.isTemplate = true
         } else {
-            // Fallback for older systems.
             button.title = "📋"
         }
         button.toolTip = "MenuBarTool"
+    }
+
+    private func loadAppIcon() -> NSImage? {
+        // Try the icon inside the running .app bundle first.
+        if let bundleIconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: bundleIconURL) {
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        // Fall back to a Resources/AppIcon.png next to the executable (raw
+        // SwiftPM build or development run).
+        let pngURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources/AppIcon.png")
+        if let image = NSImage(contentsOf: pngURL) {
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        return nil
     }
 
     // MARK: - Menu building
@@ -139,6 +164,25 @@ final class StatusBarController: NSObject {
 
         clipboardSubmenu.addItem(.separator())
 
+        // Per-item delete submenu: lets users remove a specific entry without
+        // clearing the entire history.
+        let deleteSubmenuItem = NSMenuItem(title: "删除…", action: nil, keyEquivalent: "")
+        let deleteSubmenu = NSMenu()
+        for entry in history {
+            let delItem = NSMenuItem(
+                title: ClipboardHistoryManager.preview(of: entry),
+                action: #selector(deleteHistoryItem(_:)),
+                keyEquivalent: "")
+            delItem.target = self
+            delItem.representedObject = entry
+            delItem.toolTip = entry
+            deleteSubmenu.addItem(delItem)
+        }
+        deleteSubmenuItem.submenu = deleteSubmenu
+        clipboardSubmenu.addItem(deleteSubmenuItem)
+
+        clipboardSubmenu.addItem(.separator())
+
         let clearItem = NSMenuItem(title: "清空历史", action: #selector(clearHistory), keyEquivalent: "")
         clearItem.target = self
         clipboardSubmenu.addItem(clearItem)
@@ -158,6 +202,11 @@ final class StatusBarController: NSObject {
 
     @objc private func clearHistory() {
         clipboardManager.clear()
+    }
+
+    @objc private func deleteHistoryItem(_ sender: NSMenuItem) {
+        guard let content = sender.representedObject as? String else { return }
+        clipboardManager.remove(content)
     }
 
     @objc private func openSettings() {
