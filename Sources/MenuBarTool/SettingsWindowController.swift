@@ -193,13 +193,11 @@ final class SettingsWindowController: NSWindowController {
     /// Must be called before any operation that reads the working copy for
     /// persistence (Save, Export) or structural changes (Remove, Import).
     private func commitActiveEditor() {
-        guard let editor = activeEditor else { return }
+        guard activeEditor != nil else { return }
         // Resigning first responder sends textDidEndEditing(_:) to the cell,
         // which writes the value back to the model.
         window?.makeFirstResponder(nil)
         activeEditor = nil
-        // Keep the editor's string in sync in case the cell was reused.
-        _ = editor.stringValue
     }
 
     @objc private func startEditingSelectedRow() {
@@ -395,12 +393,6 @@ extension SettingsWindowController: NSTableViewDelegate {
             }
         }
         return cell
-    }
-
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        // Starting an edit via double-click is handled by doubleAction, but if
-        // the user single-clicks a row and starts typing, AppKit does not
-        // automatically enter edit mode. We keep the simple double-click model.
     }
 }
 

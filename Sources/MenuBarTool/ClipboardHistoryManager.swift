@@ -14,17 +14,9 @@ final class ClipboardHistoryManager {
     private let pasteboard = NSPasteboard.general
     private var lastChangeCount: Int
     private var timer: Timer?
-    private let lock = NSLock()
 
     /// In-memory + persisted history, newest first.
-    private var _history: [String] = []
-
-    /// Thread-safe snapshot of the current history.
-    var history: [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        return _history
-    }
+    private(set) var history: [String] = []
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -71,60 +63,46 @@ final class ClipboardHistoryManager {
     /// Sync `lastChangeCount` with the pasteboard after a manual write so the
     /// next poll doesn't re-detect the change we just made ourselves.
     func syncChangeCount() {
-        lock.lock()
-        defer { lock.unlock() }
         lastChangeCount = pasteboard.changeCount
         defaults.set(lastChangeCount, forKey: AppConstants.lastChangeCountKey)
     }
 
     /// Insert a copied string at the front, de-duplicating and trimming to the max size.
     func add(_ string: String) {
-        lock.lock()
-        _history.removeAll(where: { $0 == string })
-        _history.insert(string, at: 0)
-        if _history.count > AppConstants.maxClipboardHistory {
-            _history.removeLast(_history.count - AppConstants.maxClipboardHistory)
+        history.removeAll(where: { $0 == string })
+        history.insert(string, at: 0)
+        if history.count > AppConstants.maxClipboardHistory {
+            history.removeLast(history.count - AppConstants.maxClipboardHistory)
         }
-        defaults.set(_history, forKey: AppConstants.clipboardHistoryKey)
-        lock.unlock()
+        save()
         NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
     }
 
     /// Remove the entry at the given index.
     func remove(at index: Int) {
-        lock.lock()
-        guard _history.indices.contains(index) else { lock.unlock(); return }
-        _history.remove(at: index)
-        defaults.set(_history, forKey: AppConstants.clipboardHistoryKey)
-        lock.unlock()
-        NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
-    }
-
-    /// Remove the first entry matching the given content.
-    func remove(_ content: String) {
-        lock.lock()
-        guard let index = _history.firstIndex(of: content) else { lock.unlock(); return }
-        _history.remove(at: index)
-        defaults.set(_history, forKey: AppConstants.clipboardHistoryKey)
-        lock.unlock()
+        guard history.indices.contains(index) else { return }
+        history.remove(at: index)
+        save()
         NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
     }
 
     /// Clear the entire history.
     func clear() {
-        lock.lock()
-        guard !_history.isEmpty else { lock.unlock(); return }
-        _history.removeAll()
-        defaults.set(_history, forKey: AppConstants.clipboardHistoryKey)
-        lock.unlock()
+        guard !history.isEmpty else { return }
+        history.removeAll()
+        save()
         NotificationCenter.default.post(name: ClipboardHistoryManager.didChangeNotification, object: nil)
     }
 
     // MARK: - Persistence
 
+    private func save() {
+        defaults.set(history, forKey: AppConstants.clipboardHistoryKey)
+    }
+
     private func load() {
         if let stored = defaults.array(forKey: AppConstants.clipboardHistoryKey) as? [String] {
-            _history = stored
+            history = stored
         }
     }
 

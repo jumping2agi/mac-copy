@@ -76,7 +76,6 @@ final class StatusBarController: NSObject {
         // Try the icon inside the running .app bundle first.
         if let bundleIconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let image = NSImage(contentsOf: bundleIconURL) {
-            // The status bar expects a square, reasonably sized template image.
             image.size = NSSize(width: 18, height: 18)
             return image
         }
@@ -166,7 +165,7 @@ final class StatusBarController: NSObject {
         clipboardSubmenu.addItem(.separator())
 
         // Per-item delete submenu: lets users remove a specific entry without
-        // clearing the entire history. History items above remain click-to-copy.
+        // clearing the entire history.
         let deleteSubmenuItem = NSMenuItem(title: "删除…", action: nil, keyEquivalent: "")
         let deleteSubmenu = NSMenu()
         for entry in history {

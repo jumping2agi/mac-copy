@@ -8,8 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install a hidden main menu with the standard Edit menu. Although the
         // app runs as an accessory (LSUIElement, no visible menu bar), this
         // menu is required for the system to route ⌘A/C/V/X/Z (and friends) to
-        // text fields in the settings window. Without it, those shortcuts are
-        // silently dropped because there is no Edit menu to validate against.
+        // text fields in the settings window.
         installEditMenu()
 
         // Build the menu bar item.
@@ -32,12 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let editMenu = NSMenu(title: "编辑")
         editMenuItem.submenu = editMenu
 
-        // Use the raw "undo:" / "redo:" selectors (with colon). These route
-        // through the responder chain to the field editor (NSTextView) and the
-        // shared NSUndoManager. We cannot use #selector(UndoManager.undo) because
-        // it produces the "undo" selector (no colon), and we cannot use
-        // #selector(NSResponder.undo(_:)) because NSResponder does not declare
-        // the method; it is dynamically handled by NSTextView/NSUndoManager.
+        // NSResponder/NSUndoManager do not declare undo(_:) in the SDK headers,
+        // so #selector would fail to compile. Use raw selectors (with colon) which
+        // are dynamically routed through the responder chain to NSTextView and
+        // the shared NSUndoManager.
         editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
         editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(.separator())
