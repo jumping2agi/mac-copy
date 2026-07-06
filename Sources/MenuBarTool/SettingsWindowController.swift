@@ -115,7 +115,7 @@ final class SettingsWindowController: NSWindowController {
         contentTextView.isVerticallyResizable = true
         contentTextView.isHorizontallyResizable = false
         contentTextView.textContainer?.widthTracksTextView = true
-        contentTextView.textContainer?.size = NSSize(width: 0, height: .greatestFiniteMagnitude)
+        contentTextView.textContainer?.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         contentTextView.autoresizingMask = [.width]
         contentTextView.delegate = self
 
