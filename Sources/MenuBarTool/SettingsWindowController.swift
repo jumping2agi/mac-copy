@@ -268,7 +268,12 @@ final class SettingsWindowController: NSWindowController {
         defer { isSyncingPanel = false }
 
         let row = tableView.selectedRow
-        if workingPresets.indices.contains(row) {
+        let hasSelection = workingPresets.indices.contains(row)
+        // Keep action buttons in sync with the selection / list state.
+        removeButton.isEnabled = hasSelection
+        exportButton.isEnabled = !workingPresets.isEmpty
+
+        if hasSelection {
             let preset = workingPresets[row]
             titleField.stringValue = preset.title
             contentTextView.string = preset.content
@@ -299,11 +304,16 @@ final class SettingsWindowController: NSWindowController {
     // MARK: - Actions
 
     @objc private func addRow() {
+        commitEditPanelToModel()
         workingPresets.append(PresetText(title: "新条目", content: ""))
         let newRow = workingPresets.count - 1
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
         tableView.scrollRowToVisible(newRow)
+        // Always refresh the panel explicitly: selectRowIndexes may not trigger
+        // tableViewSelectionDidChange if the index happens to match the previous
+        // selection (e.g. adding when row 0 was already selected).
+        updateEditPanel()
         // Focus the title field and select all so the user can immediately
         // type to replace the default "新条目" name.
         DispatchQueue.main.async { [weak self] in
@@ -314,6 +324,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func removeRow() {
+        commitEditPanelToModel()
         let row = tableView.selectedRow
         guard workingPresets.indices.contains(row) else { return }
         workingPresets.remove(at: row)
@@ -321,9 +332,12 @@ final class SettingsWindowController: NSWindowController {
         let newSelection = min(row, workingPresets.count - 1)
         if newSelection >= 0 {
             tableView.selectRowIndexes(IndexSet(integer: newSelection), byExtendingSelection: false)
-        } else {
-            updateEditPanel()
         }
+        // Always refresh the panel: after reloadData the selection index may
+        // not have changed (e.g. removing row 0 from a multi-item list), so
+        // tableViewSelectionDidChange might not fire and the panel would show
+        // stale data from the deleted row.
+        updateEditPanel()
     }
 
     @objc private func titleFieldAction() {
@@ -345,6 +359,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func save() {
+        commitEditPanelToModel()
         // Model is already in sync via live commits; just clean and persist.
         let cleaned = workingPresets.map { preset -> PresetText in
             let title = preset.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -363,6 +378,7 @@ final class SettingsWindowController: NSWindowController {
     // MARK: - Import / Export
 
     @objc private func exportPresets() {
+        commitEditPanelToModel()
         let panel = NSSavePanel()
         panel.title = "导出快捷文本"
         panel.nameFieldStringValue = "MenuBarTool-presets.json"
@@ -380,6 +396,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func importPresets() {
+        commitEditPanelToModel()
         let panel = NSOpenPanel()
         panel.title = "导入快捷文本"
         panel.allowedContentTypes = [.json]
@@ -396,6 +413,8 @@ final class SettingsWindowController: NSWindowController {
                 if tableView.selectedRow < 0, !workingPresets.isEmpty {
                     tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
                 }
+                // Refresh panel + button states after structural change.
+                updateEditPanel()
             } catch {
                 showAlert(title: "导入失败", message: error.localizedDescription)
             }
